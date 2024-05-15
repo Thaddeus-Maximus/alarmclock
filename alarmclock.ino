@@ -61,14 +61,15 @@ void alarmCallback() {
   alarmFlag = 1;
 }
 
-enum adjustment {CANCEL, ALARM, VOLUME, BRIGHTNESS, TIME};
+enum Adjustment {CANCEL=0, ALARM=2, VOLUME=1, TIME=3};
+const uint8_t n_adjustments = 4;
 
-// display "ALAr"
+// display "CUr"
 const uint8_t SEG_TIME[] = {
-SEG_C | SEG_E | SEG_G,           // n
-SEG_D | SEG_E | SEG_C | SEG_G,   // o
-SEG_D | SEG_E | SEG_C,           // u
-SEG_D | SEG_C                    // _|
+SEG_A | SEG_E | SEG_D | SEG_F        , // C
+SEG_F | SEG_E | SEG_C | SEG_D | SEG_B, // V (U)
+SEG_E | SEG_G,                         // r
+0
 };
 // display "ALAr"
 const uint8_t SEG_ALARM[] = {
@@ -79,32 +80,53 @@ SEG_E | SEG_G                                  // r
 };
 // display "VOL"
 const uint8_t SEG_VOLUME[] = {
-SEG_F | SEG_E | SEG_C | SEG_D | SEG_B,         // v
-SEG_D | SEG_E | SEG_C | SEG_G,                 // o
+SEG_F | SEG_E | SEG_C | SEG_D | SEG_B,         // V (U)
+SEG_A | SEG_B | SEG_C | SEG_E | SEG_F | SEG_D, // O
 SEG_F | SEG_E | SEG_D ,                        // L
 0                                              // 
 };
-// display "Lu"
-const uint8_t SEG_BRIGHTNESS[] = {
-SEG_F | SEG_E | SEG_D ,          // L
-SEG_D | SEG_E | SEG_C,           // u
-0,
+// display "ESC"
+const uint8_t SEG_CANCEL[] = {
+SEG_A | SEG_E | SEG_D | SEG_F | SEG_G, // E
+SEG_A | SEG_F | SEG_G | SEG_C | SEG_D, // S
+SEG_A | SEG_E | SEG_D | SEG_F        , // C
 0 
 };
 
 
-void loop() 
-{
+const uint8_t SEG_PROGRESS[][4] = {
+  {0, 0, SEG_A, 0},
+  {0, 0, SEG_A, SEG_A},
+  {0, 0, SEG_A, SEG_A|SEG_B},
+  {0, 0, SEG_A, SEG_A|SEG_B|SEG_C},
+  {0, 0, SEG_A, SEG_A|SEG_B|SEG_C|SEG_D},
+  {0, 0, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {0, SEG_D, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {SEG_D, SEG_D, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {SEG_D|SEG_E, SEG_D, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {SEG_D|SEG_E|SEG_F, SEG_D, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {SEG_D|SEG_E|SEG_F|SEG_A, SEG_D, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D},
+  {SEG_D|SEG_E|SEG_F|SEG_A, SEG_D|SEG_A, SEG_A|SEG_D, SEG_A|SEG_B|SEG_C|SEG_D}
+};
+
+int16_t alarmMovement = 0;
+
+void loop() {
   RTCTime currentTime;
   RTC.getTime(currentTime);
-
-  display.showNumberDecEx(currentTime.getHour()*100+currentTime.getMinutes(), 0b01000000, true);  // number, dot mask, show leading zeroes, Expect: 00:00
-  
   
   if (alarmFlag < 0) {
     int delta = encoder.getPosition() - lastEncoded;
-    alarmFlag += delta;
-    if (alarmFlag >= 0) {
+    lastEncoded += delta;
+
+    alarmMovement += delta;
+
+    if (alarmMovement)
+      display.setSegments(SEG_PROGRESS[map(abs(alarmMovement), 0, 64, 0, 12)]);
+    else
+      display.showNumberDecEx(currentTime.getHour()*100+currentTime.getMinutes(), 0b01000000, true);  // number, dot mask, show leading zeroes, Expect: 00:00
+
+    if (abs(alarmMovement) >= 64) {
       dfmp3.stop();
       alarmFlag = 0;
     }
@@ -118,43 +140,47 @@ void loop()
     if (delta) {
       display.setBrightness(brightness);
     }
+
+    display.showNumberDecEx(currentTime.getHour()*100+currentTime.getMinutes(), 0b01000000, true);  // number, dot mask, show leading zeroes, Expect: 00:00
   }
 
-  lastEncoded = encoder.getPosition();
-
   if (!digitalRead(BTN)) { // if button pressed
-    uint32_t pushstart = millis();
+    display.clear();
+    delay(20);
+    while (!digitalRead(BTN)) ; // wait until button released
     delay(20);
 
-    uint8_t mode = CANCEL;
+    int8_t mode = 1;
+    
+    while(digitalRead(BTN)) {
+      int delta = encoder.getPosition() - lastEncoded;
+      lastEncoded += delta;
+      mode += delta;
+      //if (mode < 0) mode = 0;
+      //if (mode >= n_adjustments) mode = n_adjustments-1;
+      mode = mode % n_adjustments;
 
-    while(!digitalRead(BTN)){
-             if (millis()-pushstart > 3500) {
-        mode = BRIGHTNESS;
-      } else if (millis()-pushstart > 2500) {
-        mode = TIME;
-      } else if (millis()-pushstart > 1500) {
-        mode = ALARM;
-      } else if (millis()-pushstart > 500) {
-        mode = VOLUME;
-      }
 
-      if (mode == CANCEL) display.clear();
-      if (mode == BRIGHTNESS) display.setSegments(SEG_BRIGHTNESS);
+      if (mode == CANCEL) display.setSegments(SEG_CANCEL);
       if (mode == TIME) display.setSegments(SEG_TIME);
       if (mode == ALARM) display.setSegments(SEG_ALARM);
       if (mode == VOLUME) display.setSegments(SEG_VOLUME);
     }
 
+    display.clear();
+
+    delay(20);
+    while (!digitalRead(BTN));
+    delay(20);
+
     uint32_t releaseTime = millis();
 
     // flash the mode being entered
-    while(millis()<releaseTime+1000) {
+    while(millis()<releaseTime+800) {
       if ((millis()/200) % 2) {
         display.clear();
       } else {
         if (mode == CANCEL) display.clear();
-        if (mode == BRIGHTNESS) display.setSegments(SEG_BRIGHTNESS);
         if (mode == TIME) display.setSegments(SEG_TIME);
         if (mode == ALARM) display.setSegments(SEG_ALARM);
         if (mode == VOLUME) display.setSegments(SEG_VOLUME);
@@ -180,21 +206,6 @@ void loop()
         display.showNumberDec(volume);
       }
       dfmp3.stop();
-    }
-    if (mode == BRIGHTNESS) {
-      while(digitalRead(BTN)) {
-        int delta = encoder.getPosition() - lastEncoded;
-        lastEncoded += delta;
-
-        brightness += delta;
-        if (brightness > 7) brightness = 7;
-        if (brightness < 0) brightness = 0;
-        if (delta) {
-         display.setBrightness(brightness);
-        }
-
-        display.showNumberDec(brightness);
-      }
     }
     if (mode == ALARM) {
       int minutes = alarmTime.getMinutes();
@@ -275,6 +286,7 @@ void loop()
   if (alarmFlag > 0) {
     dfmp3.setVolume(volume);
     dfmp3.playMp3FolderTrack(1);
-    alarmFlag = -24;
+    alarmFlag = -1;
+    alarmMovement = 0;
   }
 }
